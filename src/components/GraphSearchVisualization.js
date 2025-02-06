@@ -46,6 +46,8 @@ const GraphSearchVisualization = () => {
   const dragStartPos = useRef({ x: 0, y: 0 });
   const [hasDragged, setHasDragged] = useState(false);
 
+  const [currentDepthLimit, setCurrentDepthLimit] = useState(0);
+
   useEffect(() => {
     setIsClient(true);
   }, []);
@@ -271,6 +273,9 @@ const GraphSearchVisualization = () => {
     setIsRunning(false);
     setHistory([]);
     setNodeDepths({ [startNode]: 0 });
+    if (algorithm === 'ids') {
+      setCurrentDepthLimit(0);
+    }
   };
 
   const resetSearch = () => {
@@ -289,8 +294,15 @@ const GraphSearchVisualization = () => {
     saveState();
 
     if (open.length === 0) {
+      if (algorithm === 'ids') {
+        setCurrentDepthLimit(prev => prev + 1);
+        setOpen([startNode]);
+        setVisited(new Set());
+        setCurrent(null);
+        setNodeDepths({ [startNode]: 0 });
+        return;
+      }
       setStatus('failure');
-      setIsRunning(false);
       return;
     }
 
@@ -303,16 +315,13 @@ const GraphSearchVisualization = () => {
     if (goalNodes.has(node)) {
       setOpen(newOpen);
       setStatus('success');
-      setIsRunning(false);
       return;
     }
 
-    // For DLS, only expand nodes that haven't reached the depth limit
     let newNodes = [];
-    if (algorithm !== 'dls' || currentDepth < depthLimit) {
+    if (algorithm !== 'dls' && algorithm !== 'ids' || currentDepth < (algorithm === 'ids' ? currentDepthLimit : depthLimit)) {
       newNodes = graph[node].neighbors.filter(n => !visited.has(n) && !open.includes(n));
       
-      // Set depths for new nodes
       newNodes.forEach(n => {
         setNodeDepths(prev => ({
           ...prev,
@@ -323,7 +332,7 @@ const GraphSearchVisualization = () => {
     
     setOpen(algorithm === 'bfs' 
       ? [...newOpen, ...newNodes]  // BFS: Add to end
-      : [...newNodes, ...newOpen]  // DFS/DLS: Add to front
+      : [...newNodes, ...newOpen]  // DFS/DLS/IDS: Add to front
     );
     
     setStepCount(prev => prev + 1);
@@ -557,6 +566,7 @@ const GraphSearchVisualization = () => {
                     <SelectItem value="bfs">Breadth-First Search</SelectItem>
                     <SelectItem value="dfs">Depth-First Search</SelectItem>
                     <SelectItem value="dls">Depth-Limited Search</SelectItem>
+                    <SelectItem value="ids">Iterative Deepening Search</SelectItem>
                   </SelectContent>
                 </Select>
                 {algorithm === 'dls' && (
@@ -587,6 +597,12 @@ const GraphSearchVisualization = () => {
                   Reset
                 </Button>
               </div>
+
+              {algorithm === 'ids' && (
+                <div className="mt-2">
+                  <p><strong>Current Depth Limit:</strong> {currentDepthLimit}</p>
+                </div>
+              )}
 
               <div className="border rounded p-4">
                 <canvas 
@@ -622,7 +638,7 @@ const GraphSearchVisualization = () => {
               </div>
 
               <div className="space-y-2">
-                <p><strong>Algorithm:</strong> {algorithm === 'bfs' ? 'Breadth-First Search' : algorithm === 'dfs' ? 'Depth-First Search' : 'Depth-Limited Search'}</p>
+                <p><strong>Algorithm:</strong> {algorithm === 'bfs' ? 'Breadth-First Search' : algorithm === 'dfs' ? 'Depth-First Search' : algorithm === 'dls' ? 'Depth-Limited Search' : 'Iterative Deepening Search'}</p>
                 <p><strong>Queue Type:</strong> {algorithm === 'bfs' ? 'FIFO (add to end)' : 'LIFO (add to front)'}</p>
                 {algorithm === 'dls' && <p><strong>Depth Limit (K):</strong> {depthLimit}</p>}
                 <p><strong>Status:</strong> {status.charAt(0).toUpperCase() + status.slice(1)}</p>
