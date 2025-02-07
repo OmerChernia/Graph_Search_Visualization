@@ -56,9 +56,37 @@ const GraphSearchVisualization = () => {
   const nextIdRef = useRef(1);
   const searchTreeCanvasRef = useRef(null);
 
+  // ---------------------------
+  // New: Hill Climbing States and References
+  // ---------------------------
+  const [hillClimbingCurrent, setHillClimbingCurrent] = useState(null);
+  const [hillClimbingHistory, setHillClimbingHistory] = useState([]);
+  const hillClimbingCanvasRef = useRef(null);
+  // We'll use a ref to store the current point synchronously.
+  const currentPointRef = useRef(null);
+
+  // Global best tracking across all runs.
+  const [globalBestX, setGlobalBestX] = useState(null);
+  const [globalBestValue, setGlobalBestValue] = useState(-Infinity);
+
+  // ---------------------------
+  // States for "Bing Hill Restart Random" auto-run mode
+  // ---------------------------
+  const [isBingRunning, setIsBingRunning] = useState(false);
+  const [bingIterationCount, setBingIterationCount] = useState(0);
+  const maxBingIterations = 10; // Adjust the total number of iterations as desired
+  // Use a ref to synchronously keep track of iterations.
+  const bingIterationRef = useRef(0);
+  // A ref to hold the latest isBingRunning value.
+  const isBingRunningRef = useRef(isBingRunning);
+
   useEffect(() => {
     setIsClient(true);
   }, []);
+
+  useEffect(() => {
+    isBingRunningRef.current = isBingRunning;
+  }, [isBingRunning]);
 
   // ---------------------------
   // Heuristic helper for PHS.
@@ -741,6 +769,236 @@ const GraphSearchVisualization = () => {
     }
   }, [autoRun, status, open, algorithm, dfsStack]);
 
+  // ---------------------------
+  // Hill Climbing Helper Function for an interesting function graph.
+  // f(x) = 50*sin((π/75)*x) + 50*cos((π/50)*x) + 100
+  // This produces multiple local extrema.
+  // ---------------------------
+  const f = (x) => {
+    return 50 * Math.sin((x * Math.PI) / 75) + 50 * Math.cos((x * Math.PI) / 50) + 100;
+  };
+
+  // ---------------------------
+  // Hill Climbing Event Handlers and Algorithm Logic
+  // ---------------------------
+  // (1) Set a starting point by clicking on the canvas.
+  const handleHillClimbingCanvasClick = (e) => {
+    const canvas = hillClimbingCanvasRef.current;
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      currentPointRef.current = x;
+      setHillClimbingCurrent(x);
+      setHillClimbingHistory([x]);
+    }
+  };
+
+  // (2) Run one hill climbing step by checking left and right neighbors.
+  const runHillClimbingStep = () => {
+    if (hillClimbingCurrent === null) return;
+    const stepSize = 5; // adjust as needed
+    const currentVal = f(hillClimbingCurrent);
+    let bestNeighbor = hillClimbingCurrent;
+    let bestVal = currentVal;
+
+    // Check left neighbor.
+    if (hillClimbingCurrent - stepSize >= 0) {
+      const left = hillClimbingCurrent - stepSize;
+      const leftVal = f(left);
+      if (leftVal > bestVal) {
+        bestVal = leftVal;
+        bestNeighbor = left;
+      }
+    }
+    // Check right neighbor.
+    if (hillClimbingCurrent + stepSize <= 600) {
+      const right = hillClimbingCurrent + stepSize;
+      const rightVal = f(right);
+      if (rightVal > bestVal) {
+        bestVal = rightVal;
+        bestNeighbor = right;
+      }
+    }
+
+    // If no better neighbor exists, we've reached a local maximum.
+    if (bestNeighbor === hillClimbingCurrent) {
+      const localMax = f(hillClimbingCurrent);
+      if (localMax > globalBestValue) {
+        setGlobalBestValue(localMax);
+        setGlobalBestX(hillClimbingCurrent);
+      }
+      // For manual mode, just return (or you could alert if desired)
+      return;
+    } else {
+      currentPointRef.current = bestNeighbor;
+      setHillClimbingCurrent(bestNeighbor);
+      setHillClimbingHistory((prev) => [...prev, bestNeighbor]);
+    }
+  };
+
+  // (3) Reset the hill climbing state.
+  const resetHillClimbing = () => {
+    currentPointRef.current = null;
+    setHillClimbingCurrent(null);
+    setHillClimbingHistory([]);
+  };
+
+  // (4) Random Restart Hill Climbing: choose a random starting point.
+  const randomRestartHillClimbing = () => {
+    const randomStart = Math.random() * 600;
+    currentPointRef.current = randomStart;
+    setHillClimbingCurrent(randomStart);
+    setHillClimbingHistory([randomStart]);
+  };
+
+  // ---------------------------
+  // Bing Hill Restart Random: Auto-run version of hill climbing.
+  // When a local maximum is reached, it automatically restarts until
+  // maxBingIterations is reached.
+  // ---------------------------
+  const bingHillClimbStep = () => {
+    // Use ref to check the most up-to-date value.
+    if (!isBingRunningRef.current) return;
+
+    // If no starting point exists, initialize one.
+    let current = currentPointRef.current;
+    if (current === null) {
+      randomRestartHillClimbing();
+      setTimeout(bingHillClimbStep, 300);
+      return;
+    }
+
+    const stepSize = 5;
+    const currentVal = f(current);
+    let bestNeighbor = current;
+    let bestVal = currentVal;
+
+    // Check left neighbor.
+    if (current - stepSize >= 0) {
+      const left = current - stepSize;
+      const leftVal = f(left);
+      if (leftVal > bestVal) {
+        bestVal = leftVal;
+        bestNeighbor = left;
+      }
+    }
+    // Check right neighbor.
+    if (current + stepSize <= 600) {
+      const right = current + stepSize;
+      const rightVal = f(right);
+      if (rightVal > bestVal) {
+        bestVal = rightVal;
+        bestNeighbor = right;
+      }
+    }
+
+    // If no better neighbor, we've reached a local maximum.
+    if (bestNeighbor === current) {
+      // Local maximum reached.
+      const localMax = f(current);
+      if (localMax > globalBestValue) {
+        setGlobalBestValue(localMax);
+        setGlobalBestX(current);
+      }
+      // Increase the iteration count.
+      bingIterationRef.current += 1;
+      setBingIterationCount(bingIterationRef.current);
+      console.log(
+        `Iteration ${bingIterationRef.current}: local maximum at x = ${Math.round(
+          current
+        )}, f(x) = ${localMax.toFixed(1)}`
+      );
+
+      // If maximum iterations haven't been reached, restart and continue.
+      if (bingIterationRef.current < maxBingIterations) {
+        randomRestartHillClimbing();
+        setTimeout(bingHillClimbStep, 300);
+      } else {
+        setIsBingRunning(false);
+        console.log("Bing Hill Restart Random completed.");
+      }
+      return;
+    } else {
+      // Continue hill climbing.
+      currentPointRef.current = bestNeighbor;
+      setHillClimbingCurrent(bestNeighbor);
+      setHillClimbingHistory((prev) => [...prev, bestNeighbor]);
+      setTimeout(bingHillClimbStep, 300);
+    }
+  };
+
+  // Start the auto-run Bing Hill Restart Random mode.
+  const runBingHillRestartRandom = () => {
+    bingIterationRef.current = 0; // Reset the ref counter.
+    setBingIterationCount(0);
+    resetHillClimbing();
+    randomRestartHillClimbing();
+    setIsBingRunning(true);
+    // Start the loop after a short delay.
+    setTimeout(bingHillClimbStep, 300);
+  };
+
+  // Stop the auto-run.
+  const stopBingHillRestartRandom = () => {
+    setIsBingRunning(false);
+  };
+
+  // ---------------------------
+  // Draw the Hill Climbing Function Graph
+  // ---------------------------
+  useEffect(() => {
+    const canvas = hillClimbingCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    // Clear the canvas.
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw the x-axis.
+    ctx.beginPath();
+    ctx.moveTo(0, canvas.height);
+    ctx.lineTo(canvas.width, canvas.height);
+    ctx.strokeStyle = "#000";
+    ctx.stroke();
+
+    // Draw the function curve.
+    ctx.beginPath();
+    for (let x = 0; x <= canvas.width; x++) {
+      const y = canvas.height - f(x); // invert y-axis
+      if (x === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.strokeStyle = "blue";
+    ctx.stroke();
+
+    // Draw the hill climbing path.
+    if (hillClimbingHistory.length > 0) {
+      ctx.beginPath();
+      hillClimbingHistory.forEach((x, idx) => {
+        const y = canvas.height - f(x);
+        if (idx === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      });
+      ctx.strokeStyle = "red";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    // Highlight the current point.
+    if (hillClimbingCurrent !== null) {
+      const y = canvas.height - f(hillClimbingCurrent);
+      ctx.beginPath();
+      ctx.arc(hillClimbingCurrent, y, 5, 0, 2 * Math.PI);
+      ctx.fillStyle = "green";
+      ctx.fill();
+    }
+  }, [hillClimbingCurrent, hillClimbingHistory]);
+
   return (
     <Card className="w-full max-w-4xl">
       <CardHeader>
@@ -846,6 +1104,7 @@ const GraphSearchVisualization = () => {
                     <SelectItem value="greedy-dfs">Greedy DFS</SelectItem>
                     <SelectItem value="phs">PHS Algorithm (Greedy Best-First)</SelectItem>
                     <SelectItem value="a-star">A* Algorithm</SelectItem>
+                    <SelectItem value="hill-climbing">Hill Climbing</SelectItem>
                   </SelectContent>
                 </Select>
                 {algorithm === 'dls' && (
@@ -925,6 +1184,65 @@ const GraphSearchVisualization = () => {
                     height="400" 
                     className="border"
                   />
+                </div>
+              )}
+
+              {algorithm === 'hill-climbing' && (
+                <div className="mt-4">
+                  <h3 className="text-xl font-bold">Hill Climbing Visualization</h3>
+                  <p>
+                    Click on the graph to select a starting point and then use the controls below.
+                  </p>
+                  <canvas
+                    ref={hillClimbingCanvasRef}
+                    width="600"
+                    height="300"
+                    className="border mb-2"
+                    onClick={handleHillClimbingCanvasClick}
+                  />
+                  <p>
+                    {hillClimbingCurrent !== null ? (
+                      <>Current Point: {Math.round(hillClimbingCurrent)} (f(x) = {f(hillClimbingCurrent).toFixed(1)})</>
+                    ) : (
+                      "No starting point selected."
+                    )}
+                  </p>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    <Button onClick={runHillClimbingStep} disabled={hillClimbingCurrent === null || isBingRunning}>
+                      Step Hill Climbing
+                    </Button>
+                    <Button onClick={resetHillClimbing}>
+                      Reset Hill Climbing
+                    </Button>
+                    <Button onClick={randomRestartHillClimbing}>
+                      Random Restart Hill Climbing
+                    </Button>
+                  </div>
+                  <hr className="my-4" />
+                  <h4 className="text-lg font-bold">Bing Hill Restart Random</h4>
+                  <p>
+                    This mode automatically performs iterative hill climbing. When a local maximum is reached, it will restart
+                    until {maxBingIterations} iterations have been executed.
+                  </p>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {!isBingRunning ? (
+                      <Button onClick={runBingHillRestartRandom}>
+                        Run Bing Hill Restart Random
+                      </Button>
+                    ) : (
+                      <Button onClick={stopBingHillRestartRandom}>
+                        Stop Bing Hill Restart Random
+                      </Button>
+                    )}
+                  </div>
+                  <p className="mt-2">
+                    Bing Iterations: {bingIterationCount} / {maxBingIterations}
+                  </p>
+                  {globalBestX !== null && (
+                    <p className="mt-2">
+                      Global Best: x = {Math.round(globalBestX)}, f(x) = {globalBestValue.toFixed(1)}
+                    </p>
+                  )}
                 </div>
               )}
 
